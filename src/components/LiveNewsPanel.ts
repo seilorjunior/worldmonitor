@@ -1,5 +1,5 @@
 import { Panel } from './Panel';
-import { fetchLiveVideoInfo } from '@/services/live-news';
+import { fetchLiveVideoInfo, invalidateLiveVideoCache } from '@/services/live-news';
 import { isDesktopRuntime, getRemoteApiBaseUrl, getApiBaseUrl, getLocalApiPort } from '@/services/runtime';
 import { t } from '../services/i18n';
 import { loadFromStorage, saveToStorage } from '@/utils';
@@ -30,6 +30,7 @@ type YouTubePlayerConstructor = new (
     events: {
       onReady: () => void;
       onError?: (event: { data: number }) => void;
+      onStateChange?: (event: { data: number }) => void;
     };
   },
 ) => YouTubePlayer;
@@ -347,6 +348,12 @@ export class LiveNewsPanel extends Panel {
   private hlsFailureCooldown = new Map<string, number>();
   private readonly HLS_COOLDOWN_MS = 5 * 60 * 1000;
 
+  // Auto-retry when YouTube kills embedded live stream
+  private streamEndedRetries = 0;
+  private streamRetryTimeout: ReturnType<typeof setTimeout> | null = null;
+  private static readonly MAX_STREAM_RETRIES = 3;
+  private static readonly STREAM_RETRY_DELAY_MS = 5_000;
+
   private deferredInit = false;
   private lazyObserver: IntersectionObserver | null = null;
   private idleCallbackId: number | ReturnType<typeof setTimeout> | null = null;
@@ -479,6 +486,9 @@ export class LiveNewsPanel extends Panel {
           this.isMuted = muted;
           this.updateMuteIcon();
         }
+      } else if (msg.type === 'yt-state') {
+        // YouTube state 0 = ENDED — stream was killed by YouTube.
+        if (msg.state === 0) this.handleStreamEnded();
       }
     };
     window.addEventListener('message', this.boundMessageHandler);
@@ -571,6 +581,7 @@ export class LiveNewsPanel extends Panel {
 
   private destroyPlayer(): void {
     this.clearBotCheckTimeout();
+    this.clearStreamRetryTimeout();
     this.stopMuteSyncPolling();
     if (this.player) {
       if (typeof this.player.destroy === 'function') this.player.destroy();
@@ -892,6 +903,8 @@ export class LiveNewsPanel extends Panel {
     if (channel.id === this.activeChannel.id) return;
 
     this.activeChannel = channel;
+    this.streamEndedRetries = 0;
+    this.clearStreamRetryTimeout();
 
     this.channelSwitcher?.querySelectorAll('.live-channel-btn').forEach(btn => {
       const btnEl = btn as HTMLElement;
@@ -1149,6 +1162,34 @@ export class LiveNewsPanel extends Panel {
     }
   }
 
+  /**
+   * Called when YouTube signals the stream has ended (state 0).
+   * Invalidates the cached video ID, waits briefly, and re-initialises the
+   * player so the user doesn't have to click anything manually.
+   */
+  private handleStreamEnded(): void {
+    if (!this.isPlaying) return;
+    if (this.streamEndedRetries >= LiveNewsPanel.MAX_STREAM_RETRIES) return;
+    this.streamEndedRetries += 1;
+
+    invalidateLiveVideoCache(this.activeChannel.handle);
+
+    this.streamRetryTimeout = setTimeout(() => {
+      this.streamRetryTimeout = null;
+      if (!this.isPlaying || !this.element?.isConnected) return;
+      this.destroyPlayer();
+      this.ensurePlayerContainer();
+      void this.initializePlayer();
+    }, LiveNewsPanel.STREAM_RETRY_DELAY_MS);
+  }
+
+  private clearStreamRetryTimeout(): void {
+    if (this.streamRetryTimeout) {
+      clearTimeout(this.streamRetryTimeout);
+      this.streamRetryTimeout = null;
+    }
+  }
+
   private static loadYouTubeApi(): Promise<void> {
     if (LiveNewsPanel.apiPromise) return LiveNewsPanel.apiPromise;
 
@@ -1280,6 +1321,11 @@ export class LiveNewsPanel extends Panel {
 
           this.destroyPlayer();
           this.showEmbedError(this.activeChannel, errorCode);
+        },
+        onStateChange: (event) => {
+          // YouTube state 0 = ENDED — stream was killed by YouTube.
+          // Auto-retry so the user doesn't have to intervene manually.
+          if (event.data === 0) this.handleStreamEnded();
         },
       },
     });
