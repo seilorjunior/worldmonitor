@@ -394,9 +394,9 @@ describe('stream-ended auto-retry', () => {
       'YouTube IFrame player must have onStateChange handler');
   });
 
-  it('detects ENDED state (0) and calls handleStreamEnded', () => {
-    assert.match(liveNewsSrc, /event\.data\s*===\s*0.*handleStreamEnded/s,
-      'onStateChange must detect state 0 (ENDED) and trigger retry');
+  it('detects ENDED state and calls handleStreamEnded', () => {
+    assert.match(liveNewsSrc, /event\.data\s*===\s*LiveNewsPanel\.YT_STATE_ENDED.*handleStreamEnded/s,
+      'onStateChange must detect ENDED state and trigger retry');
   });
 
   it('handles yt-state message from desktop embed bridge', () => {

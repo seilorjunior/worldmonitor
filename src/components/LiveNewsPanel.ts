@@ -348,6 +348,9 @@ export class LiveNewsPanel extends Panel {
   private hlsFailureCooldown = new Map<string, number>();
   private readonly HLS_COOLDOWN_MS = 5 * 60 * 1000;
 
+  // YouTube player state code for ENDED
+  private static readonly YT_STATE_ENDED = 0;
+
   // Auto-retry when YouTube kills embedded live stream
   private streamEndedRetries = 0;
   private streamRetryTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -487,8 +490,8 @@ export class LiveNewsPanel extends Panel {
           this.updateMuteIcon();
         }
       } else if (msg.type === 'yt-state') {
-        // YouTube state 0 = ENDED — stream was killed by YouTube.
-        if (msg.state === 0) this.handleStreamEnded();
+        // YouTube ENDED — stream was killed by YouTube.
+        if (msg.state === LiveNewsPanel.YT_STATE_ENDED) this.handleStreamEnded();
       }
     };
     window.addEventListener('message', this.boundMessageHandler);
@@ -1174,6 +1177,7 @@ export class LiveNewsPanel extends Panel {
 
     invalidateLiveVideoCache(this.activeChannel.handle);
 
+    this.clearStreamRetryTimeout();
     this.streamRetryTimeout = setTimeout(() => {
       this.streamRetryTimeout = null;
       if (!this.isPlaying || !this.element?.isConnected) return;
@@ -1323,9 +1327,9 @@ export class LiveNewsPanel extends Panel {
           this.showEmbedError(this.activeChannel, errorCode);
         },
         onStateChange: (event) => {
-          // YouTube state 0 = ENDED — stream was killed by YouTube.
+          // YouTube ENDED — stream was killed by YouTube.
           // Auto-retry so the user doesn't have to intervene manually.
-          if (event.data === 0) this.handleStreamEnded();
+          if (event.data === LiveNewsPanel.YT_STATE_ENDED) this.handleStreamEnded();
         },
       },
     });
