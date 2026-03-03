@@ -29,6 +29,11 @@ export async function fetchLiveVideoInfo(channelHandle: string): Promise<LiveVid
   }
 }
 
+/** Remove cached live-video info so the next fetch hits the network. */
+export function invalidateLiveVideoCache(channelHandle: string): void {
+  liveVideoCache.delete(channelHandle);
+}
+
 /** @deprecated Use fetchLiveVideoInfo instead */
 export async function fetchLiveVideoId(channelHandle: string): Promise<string | null> {
   const info = await fetchLiveVideoInfo(channelHandle);

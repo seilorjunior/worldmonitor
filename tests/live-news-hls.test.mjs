@@ -385,3 +385,57 @@ describe('CSP configuration', () => {
       'CSP media-src must allow HTTPS for direct HLS CDN streams');
   });
 });
+
+// ── 12. Auto-retry on stream ended (issue #914) ──
+
+describe('stream-ended auto-retry', () => {
+  it('has onStateChange handler in YouTube IFrame player', () => {
+    assert.match(liveNewsSrc, /onStateChange:\s*\(event\)\s*=>/,
+      'YouTube IFrame player must have onStateChange handler');
+  });
+
+  it('detects ENDED state and calls handleStreamEnded', () => {
+    assert.match(liveNewsSrc, /event\.data\s*===\s*LiveNewsPanel\.YT_STATE_ENDED.*handleStreamEnded/s,
+      'onStateChange must detect ENDED state and trigger retry');
+  });
+
+  it('handles yt-state message from desktop embed bridge', () => {
+    assert.match(liveNewsSrc, /msg\.type\s*===\s*'yt-state'/,
+      'Bridge listener must handle yt-state messages from desktop embed');
+  });
+
+  it('has MAX_STREAM_RETRIES limit', () => {
+    const match = liveNewsSrc.match(/MAX_STREAM_RETRIES\s*=\s*(\d+)/);
+    assert.ok(match, 'MAX_STREAM_RETRIES constant not found');
+    assert.ok(Number(match[1]) >= 1 && Number(match[1]) <= 10,
+      'MAX_STREAM_RETRIES must be between 1 and 10');
+  });
+
+  it('resets retry counter on channel switch', () => {
+    const switchMethod = liveNewsSrc.slice(
+      liveNewsSrc.indexOf('private async switchChannel'),
+      liveNewsSrc.indexOf('private showOfflineMessage'),
+    );
+    assert.match(switchMethod, /streamEndedRetries\s*=\s*0/,
+      'switchChannel must reset stream-ended retry counter');
+  });
+
+  it('invalidates cache before retrying', () => {
+    assert.match(liveNewsSrc, /invalidateLiveVideoCache/,
+      'handleStreamEnded must invalidate cached video info before retry');
+  });
+
+  it('exports invalidateLiveVideoCache from live-news service', () => {
+    assert.match(liveNewsSvc, /export function invalidateLiveVideoCache/,
+      'live-news service must export invalidateLiveVideoCache');
+  });
+
+  it('clears stream retry timeout in destroyPlayer', () => {
+    const destroyMethod = liveNewsSrc.slice(
+      liveNewsSrc.indexOf('private destroyPlayer'),
+      liveNewsSrc.indexOf('private resumeFromIdle'),
+    );
+    assert.match(destroyMethod, /clearStreamRetryTimeout/,
+      'destroyPlayer must clear pending stream retry timeout');
+  });
+});
